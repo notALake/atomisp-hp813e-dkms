@@ -1,0 +1,35 @@
+--- a/drivers/media/i2c/mt9m114.c
++++ b/drivers/media/i2c/mt9m114.c
+@@ -1388,6 +1388,8 @@
+ 	const struct v4l2_mbus_framefmt *format;
+ 	struct v4l2_subdev_state *state;
+ 	unsigned int max_exposure;
++	u32 rotation = 0;
++	int flip = 0;
+ 	int ret;
+ 
+ 	/* Initialize the subdev. */
+@@ -1446,12 +1448,21 @@
+ 			  sensor->pixrate, sensor->pixrate, 1,
+ 			  sensor->pixrate);
+ 
++	/*
++	 * A sensor mounted upside-down (rotation == 180) needs both flips
++	 * enabled by default. Userspace can still change them.
++	 */
++	fwnode_property_read_u32(dev_fwnode(&sensor->client->dev),
++				 "rotation", &rotation);
++	if (rotation == 180)
++		flip = 1;
++
+ 	v4l2_ctrl_new_std(hdl, &mt9m114_pa_ctrl_ops,
+ 			  V4L2_CID_HFLIP,
+-			  0, 1, 1, 0);
++			  0, 1, 1, flip);
+ 	v4l2_ctrl_new_std(hdl, &mt9m114_pa_ctrl_ops,
+ 			  V4L2_CID_VFLIP,
+-			  0, 1, 1, 0);
++			  0, 1, 1, flip);
+ 
+ 	if (hdl->error) {
+ 		ret = hdl->error;

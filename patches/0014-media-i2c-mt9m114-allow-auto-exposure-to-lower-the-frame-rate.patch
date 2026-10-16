@@ -1,0 +1,22 @@
+--- a/drivers/media/i2c/mt9m114.c	2026-10-16 19:34:15.666519972 +0200
++++ b/drivers/media/i2c/mt9m114.c	2026-10-16 19:34:28.077416708 +0200
+@@ -945,10 +945,18 @@
+ static int mt9m114_set_frame_rate(struct mt9m114 *sensor)
+ {
+ 	u16 frame_rate = sensor->ifp.frame_rate << 8;
++	u16 min_frame_rate = MT9M114_MIN_FRAME_RATE << 8;
+ 	int ret = 0;
+ 
++	/*
++	 * Allow the sensor auto-exposure to lengthen the frame, i.e. lower the
++	 * frame rate down to MT9M114_MIN_FRAME_RATE, when the scene is too dark
++	 * for the requested frame rate.  On the HP Pavilion x2 (board 813E) the
++	 * MT9M114 is otherwise pinned at its maximum integration time at 30 fps
++	 * and the picture stays much too dark indoors.
++	 */
+ 	cci_write(sensor->regmap, MT9M114_CAM_AET_MIN_FRAME_RATE,
+-		  frame_rate, &ret);
++		  min_frame_rate, &ret);
+ 	cci_write(sensor->regmap, MT9M114_CAM_AET_MAX_FRAME_RATE,
+ 		  frame_rate, &ret);
+ 

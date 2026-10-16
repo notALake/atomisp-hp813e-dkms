@@ -1,0 +1,19 @@
+--- a/drivers/staging/media/atomisp/pci/atomisp_csi2_bridge.c
++++ b/drivers/staging/media/atomisp/pci/atomisp_csi2_bridge.c
+@@ -411,7 +411,15 @@
+ 		return ret;
+ 
+ 	sensor->mclkspeed = PMC_CLK_RATE_19_2MHZ;
+-	sensor->rotation = 0;
++	/*
++	 * The mt9m114 camera module of the HP Pavilion x2 Detachable
++	 * (Cherry Trail, board 813E) is mounted upside-down. The firmware
++	 * does not report this anywhere (_PLD rotation is 0), so force it
++	 * here. The mt9m114 driver uses this to default its H/V-flip
++	 * controls.
++	 */
++	if (dmi_match(DMI_SYS_VENDOR, "HP") && dmi_match(DMI_BOARD_NAME, "813E"))
++		sensor->rotation = 180;
+ 	sensor->orientation = (sensor->link == 1) ?
+ 		V4L2_FWNODE_ORIENTATION_BACK : V4L2_FWNODE_ORIENTATION_FRONT;
+ 

@@ -1,0 +1,21 @@
+--- a/drivers/media/i2c/mt9m114.c
++++ b/drivers/media/i2c/mt9m114.c
+@@ -2230,6 +2230,18 @@
+ 	if (ret < 0)
+ 		goto error_regulator;
+ 
++	/*
++	 * On ACPI systems using the INT3472-style GPIO mappings (e.g. Cherry
++	 * Trail devices with an mt9m114 camera module), the "vdd" GPIO
++	 * regulator drives the module powerdown pin, which gates the whole
++	 * camera module, including its onboard regulators. Those need some
++	 * time to stabilize after the power is turned on; resetting the
++	 * sensor too early can leave it in an unresponsive state (the probe
++	 * then fails with -EREMOTEIO). Wait for the module power to
++	 * stabilize before issuing the reset below.
++	 */
++	fsleep(20000);
++
+ 	/* Perform a hard reset if available, or a soft reset otherwise. */
+ 	if (sensor->reset) {
+ 		long freq = clk_get_rate(sensor->clk);

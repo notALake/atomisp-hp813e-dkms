@@ -1,0 +1,20 @@
+--- a/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
++++ b/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
+@@ -1387,7 +1387,16 @@
+ 	asd->high_speed_mode = false;
+ 	switch (parm->parm.capture.capturemode) {
+ 	case CI_MODE_NONE: {
+-		struct v4l2_subdev_frame_interval fi = {0};
++		/*
++		 * V4L2_SUBDEV_FORMAT_ACTIVE must be set explicitly: the subdev
++		 * core forces it for the SUBDEV_G/S_FRAME_INTERVAL ioctls, but
++		 * not for a direct v4l2_subdev_call(). With the implicit
++		 * V4L2_SUBDEV_FORMAT_TRY (0) the sensor rejects the call with
++		 * -EINVAL and the requested frame rate is never applied.
++		 */
++		struct v4l2_subdev_frame_interval fi = {
++			.which = V4L2_SUBDEV_FORMAT_ACTIVE,
++		};
+ 
+ 		fi.interval = parm->parm.capture.timeperframe;
+ 

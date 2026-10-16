@@ -1,0 +1,25 @@
+--- a/drivers/staging/media/atomisp/pci/atomisp_subdev.c
++++ b/drivers/staging/media/atomisp/pci/atomisp_subdev.c
+@@ -135,7 +135,21 @@
+ static long isp_subdev_ioctl(struct v4l2_subdev *sd,
+ 			     unsigned int cmd, void *arg)
+ {
+-	return 0;
++	/*
++	 * No private ioctl is implemented by this subdevice.
++	 *
++	 * Returning success (0) here makes the V4L2 subdev core treat every
++	 * unknown ioctl as handled. That breaks error-terminated (index
++	 * based) enumeration: VIDIOC_QUERYCAP and VIDIOC_ENUMINPUT never
++	 * fail on /dev/v4l-subdevN, so userspace that walks them until the
++	 * first error (v4l2-ctl, GStreamer's v4l2 device provider, ...)
++	 * loops forever and the application hangs.
++	 *
++	 * -ENOIOCTLCMD is the documented "not handled" return value; the
++	 * subdev core translates it to -ENOTTY, exactly like subdevices
++	 * that leave .ioctl unset (e.g. the CSI2 port / sensor nodes).
++	 */
++	return -ENOIOCTLCMD;
+ }
+ 
+ static int isp_subdev_subscribe_event(struct v4l2_subdev *sd,

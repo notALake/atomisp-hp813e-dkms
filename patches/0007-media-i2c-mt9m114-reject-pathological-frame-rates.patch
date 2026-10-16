@@ -1,0 +1,39 @@
+--- a/drivers/media/i2c/mt9m114.c
++++ b/drivers/media/i2c/mt9m114.c
+@@ -340,6 +340,7 @@
+ #define MT9M114_DEF_VBLANK				21
+ 
+ #define MT9M114_DEF_FRAME_RATE				30
++#define MT9M114_MIN_FRAME_RATE				10
+ #define MT9M114_MAX_FRAME_RATE				120
+ 
+ #define MT9M114_DEF_PIXCLOCK				48000000
+@@ -1679,12 +1680,23 @@
+ 	if (interval->which != V4L2_SUBDEV_FORMAT_ACTIVE)
+ 		return -EINVAL;
+ 
+-	if (ival->numerator != 0 && ival->denominator != 0)
+-		sensor->ifp.frame_rate = min_t(unsigned int,
+-					       ival->denominator / ival->numerator,
+-					       MT9M114_MAX_FRAME_RATE);
+-	else
++	if (ival->numerator != 0 && ival->denominator != 0) {
++		unsigned int rate = ival->denominator / ival->numerator;
++
++		/*
++		 * Reject pathological rates: storing them would poison the AET
++		 * configuration applied at streaming start and hang the preview
++		 * of applications (e.g. an application requesting 1 fps leaves
++		 * the sensor producing unusable output until re-initialized).
++		 */
++		if (rate < MT9M114_MIN_FRAME_RATE)
++			return -EINVAL;
++
++		sensor->ifp.frame_rate = min_t(unsigned int, rate,
++						       MT9M114_MAX_FRAME_RATE);
++	} else {
+ 		sensor->ifp.frame_rate = MT9M114_MAX_FRAME_RATE;
++	}
+ 
+ 	ival->numerator = 1;
+ 	ival->denominator = sensor->ifp.frame_rate;

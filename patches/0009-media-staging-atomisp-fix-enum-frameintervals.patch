@@ -1,0 +1,57 @@
+--- a/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
++++ b/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
+@@ -567,31 +567,39 @@
+ 	struct atomisp_device *isp = video_get_drvdata(vdev);
+ 	struct atomisp_sub_device *asd = atomisp_to_video_pipe(vdev)->asd;
+ 	struct atomisp_input_subdev *input = &isp->inputs[asd->input_curr];
+-	struct v4l2_subdev_frame_interval_enum fie = {
+-		.code = atomisp_in_fmt_conv[0].code,
+-		.index = fival->index,
+-		.width = fival->width,
+-		.height = fival->height,
+-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+-	};
+-	struct v4l2_subdev_state *act_sd_state;
++	struct v4l2_subdev_frame_interval fi = {
++		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
++	};
+ 	int ret;
+ 
+ 	if (!input->sensor)
+ 		return -EINVAL;
+ 
+-	act_sd_state = v4l2_subdev_lock_and_get_active_state(input->sensor);
+-	ret = v4l2_subdev_call(input->sensor, pad, enum_frame_interval,
+-			       act_sd_state, &fie);
+-	if (act_sd_state)
+-		v4l2_subdev_unlock_state(act_sd_state);
++	/*
++	 * Forwarding the enumeration to the sensor's enum_frame_interval
++	 * fails with -EINVAL because the sensor expects its own mbus code
++	 * (UYVY) while we pass the atomisp input format table's code.
++	 * Instead, report the frame interval from csi_remote_source: that
++	 * is the subdev which actually implements get_frame_interval (for
++	 * the mt9m114 it is the "ifp" subdev, not the "pixel array" one),
++	 * and the same source g_parm/s_parm use. qv4l2 fills and enables
++	 * its frame rate selector from ENUM_FRAMEINTERVALS, so this must
++	 * succeed. 'which' must also be set: the subdev core sets it to
++	 * ACTIVE for the subdev device node ioctl, but not for a direct
++	 * subdev call, and the mt9m114 returns -EINVAL for TRY.
++	 */
++	ret = v4l2_subdev_call_state_active(input->csi_remote_source,
++					    pad, get_frame_interval, &fi);
+ 	if (ret)
+ 		return ret;
+ 
++	if (fival->index > 0)
++		return -EINVAL;
++
+ 	fival->type = V4L2_FRMIVAL_TYPE_DISCRETE;
+-	fival->discrete = fie.interval;
++	fival->discrete = fi.interval;
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ static int atomisp_enum_fmt_cap(struct file *file, void *fh,

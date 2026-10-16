@@ -1,0 +1,34 @@
+--- a/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
++++ b/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
+@@ -1297,6 +1297,31 @@
+ 
+ 	parm->parm.capture.capturemode = asd->run_mode->val;
+ 
++	/*
++	 * Userspace uses the reported frame interval to size its buffers.
++	 * Leaving timeperframe at 0/0 makes some applications try to
++	 * allocate absurd amounts of memory (and then get killed by the
++	 * OOM killer). Report the sensor interval when possible, and
++	 * fall back to 30 fps otherwise.
++	 *
++	 * 'which' must be V4L2_SUBDEV_FORMAT_ACTIVE: the subdev core sets
++	 * it for the device-node ioctl, but not for a direct subdev call.
++	 */
++	{
++		struct v4l2_subdev_frame_interval fi = {
++			.which = V4L2_SUBDEV_FORMAT_ACTIVE,
++		};
++		int ret;
++
++		ret = v4l2_subdev_call_state_active(isp->inputs[asd->input_curr].csi_remote_source,
++						    pad, get_frame_interval, &fi);
++		if (!ret && fi.interval.denominator)
++			parm->parm.capture.timeperframe = fi.interval;
++		else
++			parm->parm.capture.timeperframe =
++				(struct v4l2_fract) { 1, 30 };
++	}
++
+ 	return 0;
+ }
+ 

@@ -1,0 +1,70 @@
+--- a/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
++++ b/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
+@@ -146,14 +146,21 @@
+ 		.pixelformat = V4L2_PIX_FMT_YUV420,
+ 		.depth = 12,
+ 		.mbus_code = V4L2_MBUS_FMT_CUSTOM_YUV420,
+-		.sh_fmt = IA_CSS_FRAME_FORMAT_YUV420,
++		/*
++		 * The ISP firmware writes the chroma planes of the "YUV420" and
++		 * "YV12" CSS frame formats swapped: the YUV420 config writes
++		 * Y-Cr-Cb, the YV12 config writes Y-Cb-Cr (verified empirically
++		 * on ISP2401 with shisp_2401a0_v21 firmware). Swap the CSS formats
++		 * so that the V4L2 fourcc matches the actual memory layout.
++		 */
++		.sh_fmt = IA_CSS_FRAME_FORMAT_YV12,
+ 		.description = "YUV420, planar",
+ 		.planar = true
+ 	}, {
+ 		.pixelformat = V4L2_PIX_FMT_YVU420,
+ 		.depth = 12,
+ 		.mbus_code = V4L2_MBUS_FMT_CUSTOM_YVU420,
+-		.sh_fmt = IA_CSS_FRAME_FORMAT_YV12,
++		.sh_fmt = IA_CSS_FRAME_FORMAT_YUV420,
+ 		.description = "YVU420, planar",
+ 		.planar = true
+ 	}, {
+@@ -176,13 +183,21 @@
+ 		.sh_fmt = IA_CSS_FRAME_FORMAT_NV12,
+ 		.description = "NV12, Y-plane, CbCr interleaved",
+ 		.planar = true
++#if 0
+ 	}, {
++		/*
++		 * Broken: the firmware ignores the difference with NV12 and
++		 * always writes Cb-Cr interleaved (verified empirically on
++		 * ISP2401 / shisp_2401a0_v21). Advertising NV21 makes userspace
++		 * decode swapped colors.
++		 */
+ 		.pixelformat = V4L2_PIX_FMT_NV21,
+ 		.depth = 12,
+ 		.mbus_code = V4L2_MBUS_FMT_CUSTOM_NV21,
+ 		.sh_fmt = IA_CSS_FRAME_FORMAT_NV21,
+ 		.description = "NV21, Y-plane, CbCr interleaved",
+ 		.planar = true
++#endif
+ 	}, {
+ 		.pixelformat = V4L2_PIX_FMT_NV16,
+ 		.depth = 16,
+@@ -280,12 +295,21 @@
+ 		.mbus_code = MEDIA_BUS_FMT_SRGGB12_1X12,
+ 		.sh_fmt = IA_CSS_FRAME_FORMAT_RAW,
+ 		.description = "Bayer 12"
++#if 0
+ 	}, {
++		/*
++		 * Broken: the ISP writes the red and blue channels swapped in
++		 * its RGB565 output (verified empirically on ISP2401 /
++		 * shisp_2401a0_v21: red objects come out blue). There is no V4L2
++		 * BGR565 fourcc to describe the actual layout, so do not
++		 * advertise this format at all.
++		 */
+ 		.pixelformat = V4L2_PIX_FMT_RGB565,
+ 		.depth = 16,
+ 		.mbus_code = MEDIA_BUS_FMT_BGR565_2X8_LE,
+ 		.sh_fmt = IA_CSS_FRAME_FORMAT_RGB565,
+ 		.description = "16 RGB 5-6-5"
++#endif
+ #if 0
+ 	}, {
+ 		/*

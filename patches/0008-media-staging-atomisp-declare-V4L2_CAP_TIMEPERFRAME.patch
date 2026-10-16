@@ -1,0 +1,16 @@
+--- a/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
++++ b/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
+@@ -1327,6 +1327,13 @@
+ 	parm->parm.capture.capturemode = asd->run_mode->val;
+ 
+ 	/*
++	 * Userspace (qv4l2, guvcview, ...) only trusts the frame rate if the
++	 * V4L2_CAP_TIMEPERFRAME capability flag is set: without it the frame
++	 * rate shows up as unsupported even when timeperframe is valid.
++	 */
++	parm->parm.capture.capability |= V4L2_CAP_TIMEPERFRAME;
++
++	/*
+ 	 * Userspace uses the reported frame interval to size its buffers.
+ 	 * Leaving timeperframe at 0/0 makes some applications try to
+ 	 * allocate absurd amounts of memory (and then get killed by the

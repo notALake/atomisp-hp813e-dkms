@@ -1,0 +1,23 @@
+--- a/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
++++ b/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
+@@ -457,6 +457,12 @@
+ 					      const struct v4l2_rect *native,
+ 					      int *valid_sizes)
+ {
++	/*
++	 * Note: 640x480 is intentionally not offered: with ISP2401 and the
++	 * shisp_2401a0_v21 firmware, the pipeline configured for 640x480
++	 * delivers a single frame and then stalls (observed empirically).
++	 * Userspace (e.g. guvcview) picks it as the default and freezes.
++	 */
+ 	static const struct v4l2_frmsize_discrete frame_sizes[] = {
+ 		{ 1920, 1440 },
+ 		{ 1920, 1200 },
+@@ -468,7 +474,6 @@
+ 		{ 1280,  960 },
+ 		{ 1280,  720 },
+ 		{  800,  600 },
+-		{  640,  480 },
+ 	};
+ 	u32 padding_w, padding_h;
+ 	int i;

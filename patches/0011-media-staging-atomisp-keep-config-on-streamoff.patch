@@ -1,0 +1,20 @@
+--- a/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
++++ b/drivers/staging/media/atomisp/pci/atomisp_ioctl.c
+@@ -908,7 +908,16 @@
+ 	atomisp_clear_css_buffer_counters(asd);
+ 	atomisp_css_irq_enable(isp, IA_CSS_IRQ_INFO_CSS_RECEIVER_SOF, false);
+ 
+-	atomisp_css_stop(asd, false);
++	/*
++	 * Keep the pipe and stream configuration: atomisp_css_stop() would
++	 * reset it to the defaults, so the atomisp_create_pipes_stream()
++	 * call below would have nothing to rebuild and would leave
++	 * stream_env[].stream NULL. The following VIDIOC_STREAMON would
++	 * then queue no buffers to the CSS and the stream would stall until
++	 * userspace issues S_FMT again (guvcview restarts the stream
++	 * without S_FMT when the frame rate is changed).
++	 */
++	atomisp_css_stop(asd, true);
+ 
+ 	atomisp_subdev_cleanup_pending_events(asd);
+ 

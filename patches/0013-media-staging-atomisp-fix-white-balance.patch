@@ -1,0 +1,107 @@
+diff -ruN a/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.c b/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.c
+--- a/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.c	2026-10-16 14:36:25.097295156 +0200
++++ b/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.c	2026-10-16 19:04:12.148408086 +0200
+@@ -4,6 +4,9 @@
+  * Copyright (c) 2015, Intel Corporation.
+  */
+ 
++#include <linux/module.h>
++#include <linux/moduleparam.h>
++
+ #include "ia_css_types.h"
+ #include "sh_css_defs.h"
+ #ifndef IA_CSS_NO_DEBUG
+@@ -13,13 +16,58 @@
+ 
+ #include "ia_css_wb.host.h"
+ 
+-const struct ia_css_wb_config default_wb_config = {
+-	1,
+-	32768,
+-	32768,
+-	32768,
+-	32768
+-};
++/*
++ * Default white balance gains.
++ *
++ * On the HP Pavilion x2 (board 813E) the whole pipeline runs in raw Bayer
++ * (SGRBG10) up to the Intel ISP and there is no 3A/AWB daemon on Linux, so
++ * these compile-time defaults are the only white balance ever applied.
++ *
++ * Format is {integer_bits, gr, r, b, gb} with gains expressed as
++ * u<integer_bits>.<16-integer_bits> fixed point: with integer_bits == 2 the
++ * value 16384 means 1.0 (range up to 65535 == ~4.0).
++ *
++ * NOTE: on this ISP the "r" field is the BLUE channel gain and the "b"
++ * field is the RED channel gain (verified experimentally: raising wb_r
++ * makes the picture blue, raising wb_b makes it red).  The stock 1.0/1.0
++ * defaults therefore yield a clearly yellow-green cast (blue is too low
++ * for this sensor/illuminant pair), which is compensated below.
++ *
++ * The values are exposed as module parameters so the white balance can be
++ * tuned at runtime without rebuilding/reinstalling the module, for example:
++ *
++ *     echo 27200 | sudo tee /sys/module/atomisp/parameters/wb_r
++ *     echo 15600 | sudo tee /sys/module/atomisp/parameters/wb_b
++ *
++ * The ISP stream (and therefore these defaults) is recreated on every
++ * capture session, so new values are picked up at the next STREAMON.
++ */
++static unsigned int wb_integer_bits = 2;
++static unsigned int wb_gr = 16384;	/* Gr == 1.00 */
++static unsigned int wb_r  = 27200;	/* blue == 1.66 */
++static unsigned int wb_b  = 15600;	/* red  == 0.95 */
++static unsigned int wb_gb = 16384;	/* Gb == 1.00 */
++
++/* tuned by eye with the saturation boost (patch 0015) active: that boost
++ * multiplies the residual colour cast too, so these two gains are chosen
++ * where the white background stays neutral at saturation 180. */
++module_param(wb_integer_bits, uint, 0644);
++module_param(wb_gr, uint, 0644);
++module_param(wb_r,  uint, 0644);
++module_param(wb_b,  uint, 0644);
++module_param(wb_gb, uint, 0644);
++
++const struct ia_css_wb_config *ia_css_default_wb_config(void)
++{
++	static struct ia_css_wb_config cfg;
++
++	cfg.integer_bits = wb_integer_bits;
++	cfg.gr = wb_gr;
++	cfg.r  = wb_r;
++	cfg.b  = wb_b;
++	cfg.gb = wb_gb;
++	return &cfg;
++}
+ 
+ void
+ ia_css_wb_encode(
+diff -ruN a/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.h b/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.h
+--- a/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.h	2026-10-16 14:36:25.103255543 +0200
++++ b/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.h	2026-10-16 14:37:03.358146814 +0200
+@@ -10,7 +10,11 @@
+ #include "ia_css_wb_types.h"
+ #include "ia_css_wb_param.h"
+ 
+-extern const struct ia_css_wb_config default_wb_config;
++/*
++ * Runtime configurable default white balance gains. The returned pointer
++ * stays valid for the lifetime of the driver.
++ */
++const struct ia_css_wb_config *ia_css_default_wb_config(void);
+ 
+ void
+ ia_css_wb_encode(
+diff -ruN a/drivers/staging/media/atomisp/pci/sh_css_params.c b/drivers/staging/media/atomisp/pci/sh_css_params.c
+--- a/drivers/staging/media/atomisp/pci/sh_css_params.c	2026-10-16 14:36:25.108209177 +0200
++++ b/drivers/staging/media/atomisp/pci/sh_css_params.c	2026-10-16 14:37:15.787325863 +0200
+@@ -2411,7 +2411,7 @@
+ 		/* ------ deprecated(bz675) : to ------ */
+ 
+ 		ia_css_set_s3a_config(params, &default_3a_config);
+-		ia_css_set_wb_config(params, &default_wb_config);
++		ia_css_set_wb_config(params, ia_css_default_wb_config());
+ 		ia_css_set_csc_config(params, &default_cc_config);
+ 		ia_css_set_tnr_config(params, &default_tnr_config);
+ 		ia_css_set_ob_config(params, &default_ob_config);

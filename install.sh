@@ -207,8 +207,14 @@ for full in $(dkms status 2>/dev/null | sed -E 's/[:,].*//' | grep '^atomisp-hp8
   echo "==> rimuovo versione DKMS precedente $full"
   dkms remove "$full" --all 2>/dev/null || rm -rf "/var/lib/dkms/${full%%/*}/${full#*/}"
 done
-# sorgenti di versioni ormai rimosse: DEST viene ricreato dopo, quindi va bene svuotarle
-rm -rf /usr/src/atomisp-hp813e*
+# sorgenti di versioni ormai rimosse (dkms remove non tocca mai /usr/src).
+# ATTENZIONE: $DEST e' in /usr/src ed e' gia' stato creato qui sopra (riga 164):
+# devo escluderlo, senno cancello quelli appena preparati e dkms add/build trovano
+# "Could not find module source directory".
+for d in /usr/src/atomisp-hp813e*; do
+  [ -e "$d" ] && [ "$d" != "$DEST" ] || continue
+  echo "==> rimuovo sorgenti vecchie $d"; rm -rf "$d"
+done
 
 dkms add "$PKG/$VER" 2>&1 || true
 dkms build   -m "$PKG" -v "$VER" -k "$KVER"

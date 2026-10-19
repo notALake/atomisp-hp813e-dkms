@@ -47,7 +47,8 @@ HOOK_FILE="/etc/pacman.d/hooks/75-atomisp-hp813e.hook"
 #     kernel installato che ha gli header e ricostruisce quelli senza modulo,
 #     reinvocando questo stesso script con --kver (ogni run fa UN kernel: la pulizia
 #     delle versioni DKMS e' per-versione, quindi piu' run in sequenza non si
-#     pestano i piedi).  Usata dal hook lascia il modulo invariato: e' idempotente.
+#     pestano i piedi).  E' idempotente: se il modulo c'e' gia' per quel kernel
+#     non tocca nulla (e se un build fallisce esce con codice != 0, dicendolo).
 if [ "$HOOK" = 1 ]; then
   [ "$(id -u)" = 0 ] || { echo "atomisp-hp813e --hook: serve root"; exit 1; }
   rc=0; n=0
@@ -116,7 +117,7 @@ if [ "$PREPARE_ONLY" = 0 ]; then
   #     lo script in modalita' --hook, che costruisce i moduli per i kernel che non
   #     li hanno.  Cosi' dopo un pacman -Syu basta riavviare.
   mkdir -p "$(dirname "$HOOK_FILE")"
-  cat > "$HOOK_FILE" <<'HOOK'
+  cat > "$HOOK_FILE" <<HOOK
 [Trigger]
 Type = Path
 Operation = Install
@@ -128,7 +129,7 @@ Target = usr/lib/modules/*/build/include/
 Description = Build atomisp-hp813e DKMS modules for new kernels
 When = PostTransaction
 Depends = dkms
-Exec = /usr/local/share/atomisp-hp813e/install.sh --hook
+Exec = $KIT/install.sh --hook
 HOOK
   echo "==> hook pacman scritto: $HOOK_FILE"
 fi

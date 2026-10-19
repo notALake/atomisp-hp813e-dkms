@@ -10,14 +10,46 @@ al posto di un kernel linux-zen ricompilato.
   I sorgenti scaricati restano in cache (`~/.cache/atomisp-hp813e/<tag>`) e non vengono
   riscaricati alle build successive; `--refresh` li riscarica, `ATOMISP_CACHE=...` cambia
   la cartella della cache.
-- Se cambia la versione del kernel (anche solo 7.2.11 -> 7.2.12) rilancia `sudo ./install.sh`:
-  il pacchetto DKMS contiene i sorgenti di UNA versione.
+- Se cambia la versione del kernel (anche solo 7.2.11 -> 7.2.12) ci pensa l'hook pacman
+  (vedi sotto): se per qualche motivo non gira, rilancia `sudo ./install.sh`.
+  Il pacchetto DKMS contiene i sorgenti di UNA versione.
 - Se una patch non si applica, lo script si ferma e non installa nulla.
 - A fine installazione lo script ricarica da solo i moduli. Se la webcam e' aperta il
   ricaricamento non riesce: chiudi il programma e usa
   `sudo modprobe -r atomisp && sudo modprobe atomisp` (o riavvia).
 - Secure Boot / lockdown: i moduli vanno firmati (chiave MOK in /etc/dkms/framework.conf).
 - Disinstallare: `sudo dkms remove atomisp-hp813e/<ver> --all; sudo rm /etc/modprobe.d/atomisp-hp813e.conf`
+  (e per togliere l'hook: `sudo rm /etc/pacman.d/hooks/75-atomisp-hp813e.hook`)
+
+## Aggiornamenti del kernel
+
+A ogni installazione lo script mette anche un hook pacman
+(`/etc/pacman.d/hooks/75-atomisp-hp813e.hook`). Alla fine di un `pacman -Syu` che
+installa o aggiorna un kernel (o i suoi header) l'hook:
+
+1. guarda ogni `/usr/lib/modules/<kernel>` che ha gli header (`build/`);
+2. se per quel kernel `dkms status` non riporta il modulo installato, lo ricostruisce
+   da capo dal tag zen-kernel corrispondente e lo installa. E' un controllo
+   idempotente: se il modulo c'e' gia' non tocca nulla (e allora lo script, nella
+   normale esecuzione, tiene le versioni DKMS sane di altri kernel come fallback).
+
+Quindi dopo un aggiornamento del kernel **basta riavviare**: la webcam funziona senza
+rilanciare niente a mano. L'hook guarda tutti i kernel installati, non solo quello in
+esecuzione, quindi costruisce il modulo anche prima del reboot.
+
+Anche se la ricostruzione col tag nuovo dovesse fallire (patch non applicabili, rete
+assente) di solito la webcam comunque funziona: le versioni DKMS rimaste sane vengono
+tenute, e `dkms autoinstall` (hook `70-dkms-install` di Arch) le ricompila per il kernel
+nuovo dai sorgenti dell'ultima versione funzionante, che sono comunque patchati.
+
+Se la ricostruzione automatica fallisce (rete assente, patch non applicabili al tag
+nuovo, header mancanti) lo dice in uscita a pacman e basta rilanciare a mano:
+
+    sudo /usr/local/share/atomisp-hp813e/install.sh
+
+Il kit (`install.sh` + `patches/`) viene copiato in `/usr/local/share/atomisp-hp813e/`
+perche' l'hook non deve dipendere dalla posizione della repo: lanciando `./install.sh`
+dalla repo la copia viene sempre aggiornata.
 
 ## Firmware
 
@@ -38,7 +70,7 @@ Sono anche modificabili a runtime.
 | parametro | default | significato |
 |---|---|---|
 | `wb_r` | 27200 | guadagno **blu** = 1.66x (il campo si chiama `r` ma e' il blu: nell'ISP i due campi sono scambiati) |
-| `wb_b` | 15600 | guadagno **rosso** = 0.95x |
+| `wb_b` | 17720 | guadagno **rosso** = 1.08x |
 | `saturation` | 180 | saturazione, 100 = matrice originale, 0 = scala di grigi |
 | `wb_gr` | 16384 | verde (Gr) = 1.00x |
 | `wb_gb` | 16384 | verde (Gb) = 1.00x |
@@ -48,7 +80,7 @@ I valori nuovi si leggono alla prossima apertura della webcam (lo stream ISP vie
 a ogni STREAMON), quindi si prova senza ricompilare:
 
     echo 27200 | sudo tee /sys/module/atomisp/parameters/wb_r
-    echo 15600 | sudo tee /sys/module/atomisp/parameters/wb_b
+    echo 17720 | sudo tee /sys/module/atomisp/parameters/wb_b
     echo 180   | sudo tee /sys/module/atomisp/parameters/saturation
 
 Per renderli permanenti vanno cambiati in `patches/0013-...` (`wb_r`, `wb_b`) e

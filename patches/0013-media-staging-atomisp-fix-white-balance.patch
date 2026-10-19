@@ -43,7 +43,7 @@ diff -ruN a/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.ho
 + * tuned at runtime without rebuilding/reinstalling the module, for example:
 + *
 + *     echo 27200 | sudo tee /sys/module/atomisp/parameters/wb_r
-+ *     echo 15600 | sudo tee /sys/module/atomisp/parameters/wb_b
++ *     echo 17720 | sudo tee /sys/module/atomisp/parameters/wb_b
 + *
 + * The ISP stream (and therefore these defaults) is recreated on every
 + * capture session, so new values are picked up at the next STREAMON.
@@ -51,7 +51,7 @@ diff -ruN a/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.ho
 +static unsigned int wb_integer_bits = 2;
 +static unsigned int wb_gr = 16384;	/* Gr == 1.00 */
 +static unsigned int wb_r  = 27200;	/* blue == 1.66 */
-+static unsigned int wb_b  = 15600;	/* red  == 0.95 */
++static unsigned int wb_b  = 17720;	/* red  == 1.08 */
 +static unsigned int wb_gb = 16384;	/* Gb == 1.00 */
 +
 +/* tuned by eye with the saturation boost (patch 0015) active: that boost

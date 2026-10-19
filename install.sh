@@ -9,7 +9,11 @@
 # --refresh forza il riscaricamento, cambiando kernel il tag cambia e si scarica
 # una volta sola.
 #
-# Uso:  sudo ./install.sh [--kver 7.2.11-zen1-1-zen] [--prepare-only] [--no-firmware] [--tarball|--kernelorg] [--refresh]
+# Uso:  sudo ./install.sh [--kver 7.2.11-zen1-1-zen] [--prepare-only] [--no-firmware] [--tarball|--kernelorg] [--refresh] [--hook]
+#
+# --hook e' la modalita' usata dall'hook pacman (vedi README, "Aggiornamenti del
+# kernel"): controlla tutti i kernel installati e ricostruisce quelli senza modulo,
+# reinvocando lo script con --kver per ciascuno.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -19,6 +23,7 @@ USE_TARBALL=0
 USE_KORG=0
 FIRMWARE=1
 REFRESH=0
+HOOK=0
 PATCHSET=15
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -28,9 +33,41 @@ while [ $# -gt 0 ]; do
     --tarball) USE_TARBALL=1; shift ;;
     --kernelorg) USE_KORG=1; shift ;;
     --refresh) REFRESH=1; shift ;;
+    --hook) HOOK=1; shift ;;
     *) echo "opzione sconosciuta: $1"; exit 1 ;;
   esac
 done
+
+# Kit installato in una posizione stabile: l'hook pacman gira come root (senza
+# SUDO_USER e senza sapere dove sia la repo), quindi deve avere un path fisso.
+KIT="/usr/local/share/atomisp-hp813e"
+HOOK_FILE="/etc/pacman.d/hooks/75-atomisp-hp813e.hook"
+
+# --- modalita' --hook: lanciata dall'hook pacman a fine transazione.  Controlla ogni
+#     kernel installato che ha gli header e ricostruisce quelli senza modulo,
+#     reinvocando questo stesso script con --kver (ogni run fa UN kernel: la pulizia
+#     delle versioni DKMS e' per-versione, quindi piu' run in sequenza non si
+#     pestano i piedi).  Usata dal hook lascia il modulo invariato: e' idempotente.
+if [ "$HOOK" = 1 ]; then
+  [ "$(id -u)" = 0 ] || { echo "atomisp-hp813e --hook: serve root"; exit 1; }
+  rc=0; n=0
+  for k in $(ls -1 /usr/lib/modules 2>/dev/null | sort -V); do
+    [ -e "/usr/lib/modules/$k/build" ] || continue        # niente header: non si puo' costruire
+    if dkms status 2>/dev/null | grep -qE "^atomisp-hp813e/[^, ]*, $k, [^:]*: installed"; then
+      continue                                            # gia' pronto
+    fi
+    echo "==> hook: kernel $k senza moduli atomisp -> ricostruisco da zen-kernel"
+    n=$((n + 1))
+    bash "$0" --kver "$k" || rc=1
+  done
+  if [ "$n" = 0 ]; then
+    echo "==> hook: tutti i kernel installati hanno gia' i moduli atomisp-hp813e"
+  elif [ "$rc" != 0 ]; then
+    echo "!! hook: qualche build non e' riuscita, rifalla a mano:"
+    echo "   sudo $KIT/install.sh"
+  fi
+  exit $rc
+fi
 
 # --- 7.2.11-zen1-1-zen  ->  base=7.2.11  zen=zen1  (anche "7.2.zen1-1-zen" per le x.y.0)
 if [[ "$KVER" =~ ^([0-9]+\.[0-9]+(\.[0-9]+)?)[.-](zen[0-9]+) ]]; then
@@ -59,10 +96,45 @@ if [ "$PREPARE_ONLY" = 0 ]; then
     if ! grep -Eq "^CONFIG_${s}=(y|m)" "$CFG"; then echo "   MANCA nel kernel: CONFIG_$s"; miss=1; fi
   done
   [ "$miss" = 0 ] || { echo "ERRORE: dipendenze mancanti, un modulo esterno non puo' risolverle (serve kernel ricompilato)"; exit 1; }
+
+  # --- kit stabile usato dall'hook pacman (l'hook gira come root e non sa dove sia
+  #     la repo): install.sh + patches.  Se lanciato dalla repo la copia e'
+  #     sempre aggiornata, se lanciato dal kit si salta da solo.
+  if [ "$(readlink -f "$HERE")" != "$(readlink -f "$KIT")" ]; then
+    mkdir -p "$KIT"
+    rm -rf "$KIT/patches"
+    cp -f "$HERE/install.sh" "$KIT/install.sh"
+    chmod 755 "$KIT/install.sh"
+    cp -r "$HERE/patches" "$KIT/patches"
+    if [ -f "$HERE/shisp_2401a0_v21.bin" ] && [ ! -f "$KIT/shisp_2401a0_v21.bin" ]; then
+      cp -f "$HERE/shisp_2401a0_v21.bin" "$KIT/"
+    fi
+    echo "==> kit installato in $KIT (e' la copia che usa l'hook pacman)"
+  fi
+
+  # --- hook pacman: a ogni install/upgrade di kernel (o dei suoi header) rilancia
+  #     lo script in modalita' --hook, che costruisce i moduli per i kernel che non
+  #     li hanno.  Cosi' dopo un pacman -Syu basta riavviare.
+  mkdir -p "$(dirname "$HOOK_FILE")"
+  cat > "$HOOK_FILE" <<'HOOK'
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = usr/lib/modules/*/modules.order
+Target = usr/lib/modules/*/build/include/
+
+[Action]
+Description = Build atomisp-hp813e DKMS modules for new kernels
+When = PostTransaction
+Depends = dkms
+Exec = /usr/local/share/atomisp-hp813e/install.sh --hook
+HOOK
+  echo "==> hook pacman scritto: $HOOK_FILE"
 fi
 
 # --- sorgenti: solo atomisp + mt9m114.c da zen-kernel (stesso tag del kernel in esecuzione)
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP" "$DEST.tmp"' EXIT
 export GIT_TERMINAL_PROMPT=0
 REPO=https://github.com/zen-kernel/zen-kernel
 KSRC="$TMP/git"
@@ -160,25 +232,28 @@ for p in "$HERE"/patches/0*.patch; do
     || { echo "FALLITA"; echo "Le patch non si applicano a $TAG: il driver e' cambiato, vanno riadattate."; exit 1; }
 done
 
-# --- layout DKMS
-rm -rf "$DEST"; mkdir -p "$DEST"
-cp -r "$W/drivers/staging/media/atomisp" "$DEST/atomisp"
-cp "$W/drivers/media/i2c/mt9m114.c" "$W/drivers/media/i2c/aptina-pll.h" "$DEST/"
-rm -rf "$DEST/atomisp/i2c"         # sensori OV2722/GC2235: non servono per l'MT9M114
+# --- layout DKMS.  Costruisco in "$DEST.tmp" e sposto in $DEST solo quando e' tutto
+#     pronto: se un cp/sed fallisce l'entry DKMS precedente resta valida coi suoi
+#     sorgenti (invece di restare a meta') e dkms autoinstall non si rompe.
+DST="$DEST.tmp"
+rm -rf "$DST"; mkdir -p "$DST"
+cp -r "$W/drivers/staging/media/atomisp" "$DST/atomisp"
+cp "$W/drivers/media/i2c/mt9m114.c" "$W/drivers/media/i2c/aptina-pll.h" "$DST/"
+rm -rf "$DST/atomisp/i2c"         # sensori OV2722/GC2235: non servono per l'MT9M114
 
 # Makefile di atomisp: niente Kconfig fuori dall'albero -> forza obj-m e path relativi
 sed -i -e '/^obj-\$(CONFIG_INTEL_ATOMISP) += i2c\/$/d' \
        -e 's/^obj-\$(CONFIG_VIDEO_ATOMISP)/obj-m/' \
        -e 's#\$(srctree)/drivers/staging/media/atomisp/#$(src)/#' \
-       "$DEST/atomisp/Makefile"
+       "$DST/atomisp/Makefile"
 
-cat > "$DEST/Kbuild" <<KB
+cat > "$DST/Kbuild" <<KB
 # modulo esterno: atomisp.ko + atomisp_gmin_platform.ko + mt9m114.ko (patchato)
 obj-m += atomisp/
 obj-m += mt9m114.o
 KB
 
-cat > "$DEST/dkms.conf" <<DK
+cat > "$DST/dkms.conf" <<DK
 PACKAGE_NAME="$PKG"
 PACKAGE_VERSION="$VER"
 AUTOINSTALL="yes"
@@ -195,26 +270,85 @@ BUILT_MODULE_LOCATION[2]=""
 DEST_MODULE_LOCATION[2]="/updates/dkms"
 DK
 
+rm -rf "$DEST"; mv "$DST" "$DEST"
+
 if [ "$PREPARE_ONLY" = 1 ]; then
   echo "==> sorgenti DKMS pronti in $DEST (--prepare-only: non installo nulla)"; exit 0
 fi
 
-# --- rimuovi versioni DKMS precedenti: tutte le varianti di nome che ho usato nel
-#     tempo (atomisp-hp813e, atomisp-hp813e-7.2.10, ...), compresa la stessa versione
-#     se un build e' fallito.  Se dkms remove rifiuta l'entry (sorgenti mancanti:
-#     "Manual intervention is required") la tolgo a mano, come suggerisce dkms.
+# --- gestione delle versioni DKMS gia' presenti, per ogni entry (nome/versione):
+#   (b) nome vecchio (varianti usate nel tempo)      -> entry + sorgenti
+#   (a) e' la versione che sto per ricostruire       -> solo l'entry ($DEST con i
+#        sorgenti nuovi e' gia' stato preparato qui sopra, non lo tocco)
+#   (c) manca /usr/src/<pkg>-<ver> (entry rotta)    -> solo l'entry (non c'e' niente
+#        da togliere, i sorgenti non ci sono gia')
+#   (d) nessuno dei suoi kernel e' installato        -> entry + sorgenti
+#   (e) installata sul kernel di QUESTA run ($KVER)  -> entry + sorgenti.  Va tolta
+#        PRIMA della mia build: altrimenti i .ko dei due pacchetti finiscono negli
+#        stessi /lib/modules/$KVER/updates/dkms e, quando dkms rimuove quella vecchia,
+#        cancella i .ko appena installati da me.
+#   ogni altra entry resta: e' un fallback.  Se la mia build col tag nuovo fallisce
+#   (patch non applicabili, rete assente, header non pronti) dkms autoinstall puo'
+#   costruirla comunque per il kernel nuovo dai sorgenti dell'ultima versione
+#   funzionante (che sono comunque patchati), e copre gli altri kernel installati.
+#   Prima cancellavo TUTTO ad ogni run: ad ogni aggiornamento del kernel restava
+#   niente entry, niente sorgenti, niente moduli -> la webcam moriva.
+src_missing() { [ ! -f "/usr/src/$1/dkms.conf" ]; }
+ks_of() {   # kernel associati a "pkg/ver" (una riga di dkms status per kernel)
+  dkms status 2>/dev/null | grep -F "$1, " | awk -F', ' '{print $2}' | sort -u || true
+}
 for full in $(dkms status 2>/dev/null | sed -E 's/[:,].*//' | grep '^atomisp-hp813e' | sort -u); do
-  echo "==> rimuovo versione DKMS precedente $full"
-  dkms remove "$full" --all 2>/dev/null || rm -rf "/var/lib/dkms/${full%%/*}/${full#*/}"
+  m=${full%%/*}; v=${full#*/}
+  ks="$(ks_of "$full")"
+  why=""; wipe_src=0
+  if [ "$m" != "$PKG" ]; then
+    why="nome vecchio (del passato)"; wipe_src=1
+  elif [ "$v" = "$VER" ]; then
+    why="e' la versione che sto per ricostruire"
+  elif src_missing "$m-$v"; then
+    why="entry rotta: mancano i sorgenti"
+  elif [ -z "$ks" ]; then
+    why="entry senza kernel associati"; wipe_src=1
+  else
+    nalive=0
+    for k in $ks; do
+      [ -d "/usr/lib/modules/$k" ] || continue
+      if [ "$k" = "$KVER" ]; then
+        why="installata sul kernel bersaglio $KVER"; wipe_src=1; break
+      fi
+      nalive=$((nalive + 1))
+    done
+    if [ -z "$why" ] && [ "$nalive" = 0 ]; then
+      why="nessuno dei suoi kernel e' installato"; wipe_src=1
+    fi
+  fi
+  if [ -z "$why" ]; then
+    echo "==> tengo $full (sana: serve da fallback per gli altri kernel, dkms autoinstall)"
+    continue
+  fi
+  echo "==> rimuovo entry DKMS $full ($why)"
+  dkms remove "$full" --all 2>/dev/null || rm -rf "/var/lib/dkms/$m/$v"
+  if [ "$wipe_src" = 1 ]; then rm -rf "/usr/src/$m-$v"; fi
 done
-# sorgenti di versioni ormai rimosse (dkms remove non tocca mai /usr/src).
-# ATTENZIONE: $DEST e' in /usr/src ed e' gia' stato creato qui sopra (riga 164):
-# devo escluderlo, senno cancello quelli appena preparati e dkms add/build trovano
-# "Could not find module source directory".
-for d in /usr/src/atomisp-hp813e*; do
-  [ -e "$d" ] && [ "$d" != "$DEST" ] || continue
-  echo "==> rimuovo sorgenti vecchie $d"; rm -rf "$d"
-done
+
+# sorgenti orfane: non appartengono a nessuna entry DKMS viva e non sono $DEST.
+# Prima verifico che dkms risponda davvero: se il comando fallisce (lock, errore
+# transitorio) status torna vuoto e la sweep cancellerebbe i sorgenti di entry che
+# invece esistono -> entry sane rimaste senza sorgenti.
+if dkms status >/dev/null 2>&1; then
+  alive=" "
+  for full in $(dkms status 2>/dev/null | sed -E 's/[:,].*//' | grep '^atomisp-hp813e' | sort -u); do
+    alive="$alive${full%%/*}-${full#*/} "
+  done
+  alive="$alive${DEST##*/} ${DEST##*/}.tmp "
+  for d in /usr/src/atomisp-hp813e*; do
+    [ -e "$d" ] || continue
+    case "$alive" in *" ${d##*/} "*) continue ;; esac
+    echo "==> rimuovo sorgenti orfane $d"; rm -rf "$d"
+  done
+else
+  echo "==> attenzione: dkms status non risponde, salto la pulizia delle sorgenti orfane"
+fi
 
 dkms add "$PKG/$VER" 2>&1 || true
 dkms build   -m "$PKG" -v "$VER" -k "$KVER"
@@ -253,30 +387,38 @@ if [ "$FIRMWARE" = 1 ]; then
 fi
 depmod "$KVER"
 
-# --- ricarica i moduli subito, cosi' non serve il riavvio.  Devono ricaricarli TUTTI E
-#     DUE: mt9m114 e' il driver del sensore e viene spesso gia' caricato dal kernel stock
-#     (senza flip, senza il fix AE) - se resta quello, l'immagine e' capovolta e
-#     sovraesposta.  Se la webcam e' aperta il rmmod fallisce: in quel caso
-#     chiudi il programma e ricarica/riavvia a mano.
-fail=0
-if lsmod | grep -q '^atomisp '; then
-  modprobe -r atomisp 2>/dev/null || fail=1
-fi
-if [ "$fail" = 0 ] && lsmod | grep -q '^mt9m114 '; then
-  modprobe -r mt9m114 2>/dev/null || true
-fi
-if [ "$fail" = 0 ] && modprobe atomisp 2>/dev/null; then
-  echo "==> moduli ricaricati (atomisp) - nessun riavvio necessario"
+# modprobe agisce SEMPRE sul kernel in esecuzione: con --kver (o dall'hook pacman, che
+# gira prima del riavvio) il kernel bersaglio non e' quello corrente e non c'e' niente
+# da ricaricare, i moduli verranno usati al prossimo avvio.
+if [ "$KVER" != "$(uname -r)" ]; then
+  echo "==> $KVER: moduli costruiti e installati (non e' il kernel in esecuzione:"
+  echo "    diventeranno attivi al prossimo riavvio)"
 else
-  echo "==> non sono riuscito a ricaricare i moduli: chiudi la webcam e poi"
-  echo "    sudo modprobe -r atomisp mt9m114 && sudo modprobe atomisp   (oppure riavvia)"
+  # --- ricarica i moduli subito, cosi' non serve il riavvio.  Devono ricaricarli TUTTI E
+  #     DUE: mt9m114 e' il driver del sensore e viene spesso gia' caricato dal kernel stock
+  #     (senza flip, senza il fix AE) - se resta quello, l'immagine e' capovolta e
+  #     sovraesposta.  Se la webcam e' aperta il rmmod fallisce: in quel caso
+  #     chiudi il programma e ricarica/riavvia a mano.
+  fail=0
+  if lsmod | grep -q '^atomisp '; then
+    modprobe -r atomisp 2>/dev/null || fail=1
+  fi
+  if [ "$fail" = 0 ] && lsmod | grep -q '^mt9m114 '; then
+    modprobe -r mt9m114 2>/dev/null || true
+  fi
+  if [ "$fail" = 0 ] && modprobe atomisp 2>/dev/null; then
+    echo "==> moduli ricaricati (atomisp) - nessun riavvio necessario"
+  else
+    echo "==> non sono riuscito a ricaricare i moduli: chiudi la webcam e poi"
+    echo "    sudo modprobe -r atomisp mt9m114 && sudo modprobe atomisp   (oppure riavvia)"
+  fi
+  # verifica che mt9m114 sia quello PATCHATO (updates/dkms) e non quello del kernel stock
+  case "$(modinfo -n mt9m114 2>/dev/null || true)" in
+    */updates/dkms/*) echo "    mt9m114: versione patchata ($(modinfo -n mt9m114))" ;;
+    "")               echo "    mt9m114: non caricato, si carichera' all'avvio" ;;
+    *)  echo "    ATTENZIONE: mt9m114 in uso e' quello del kernel stock (senza flip, senza il fix AE)"
+        echo "      sudo modprobe -r mt9m114 && sudo modprobe mt9m114" ;;
+  esac
 fi
-# verifica che mt9m114 sia quello PATCHATO (updates/dkms) e non quello del kernel stock
-case "$(modinfo -n mt9m114 2>/dev/null || true)" in
-  */updates/dkms/*) echo "    mt9m114: versione patchata ($(modinfo -n mt9m114))" ;;
-  "")               echo "    mt9m114: non caricato, si carichera' all'avvio" ;;
-  *)  echo "    ATTENZIONE: mt9m114 in uso e' quello del kernel stock (senza flip, senza il fix AE)"
-      echo "      sudo modprobe -r mt9m114 && sudo modprobe mt9m114" ;;
-esac
 echo "==> fatto."
 echo "    Verifica: modinfo atomisp | head -3 ; dmesg | grep -i -E 'atomisp|mt9m114'"

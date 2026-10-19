@@ -199,10 +199,16 @@ if [ "$PREPARE_ONLY" = 1 ]; then
   echo "==> sorgenti DKMS pronti in $DEST (--prepare-only: non installo nulla)"; exit 0
 fi
 
-# --- rimuovi versioni DKMS precedenti (inclusa la stessa versione, se un build e' fallito)
-for old in $(dkms status -m "$PKG" 2>/dev/null | sed -E 's/^[^/]*\/([^,:]+)[,:].*/\1/' | sort -u); do
-  echo "==> rimuovo versione DKMS precedente $old"; dkms remove "$PKG/$old" --all || true
+# --- rimuovi versioni DKMS precedenti: tutte le varianti di nome che ho usato nel
+#     tempo (atomisp-hp813e, atomisp-hp813e-7.2.10, ...), compresa la stessa versione
+#     se un build e' fallito.  Se dkms remove rifiuta l'entry (sorgenti mancanti:
+#     "Manual intervention is required") la tolgo a mano, come suggerisce dkms.
+for full in $(dkms status 2>/dev/null | sed -E 's/[:,].*//' | grep '^atomisp-hp813e' | sort -u); do
+  echo "==> rimuovo versione DKMS precedente $full"
+  dkms remove "$full" --all 2>/dev/null || rm -rf "/var/lib/dkms/${full%%/*}/${full#*/}"
 done
+# sorgenti di versioni ormai rimosse: DEST viene ricreato dopo, quindi va bene svuotarle
+rm -rf /usr/src/atomisp-hp813e*
 
 dkms add "$PKG/$VER" 2>&1 || true
 dkms build   -m "$PKG" -v "$VER" -k "$KVER"
@@ -241,17 +247,30 @@ if [ "$FIRMWARE" = 1 ]; then
 fi
 depmod "$KVER"
 
-# --- ricarica i moduli subito, cosi' non serve il riavvio (se la webcam e' in uso
-#     il rmmod fallisce: in quel caso chiudi il programma e ricarica/riavvia a mano)
+# --- ricarica i moduli subito, cosi' non serve il riavvio.  Devono ricaricarli TUTTI E
+#     DUE: mt9m114 e' il driver del sensore e viene spesso gia' caricato dal kernel stock
+#     (senza flip, senza il fix AE) - se resta quello, l'immagine e' capovolta e
+#     sovraesposta.  Se la webcam e' aperta il rmmod fallisce: in quel caso
+#     chiudi il programma e ricarica/riavvia a mano.
+fail=0
 if lsmod | grep -q '^atomisp '; then
-  if modprobe -r atomisp 2>/dev/null && modprobe atomisp 2>/dev/null; then
-    echo "==> moduli ricaricati (atomisp) - nessun riavvio necessario"
-  else
-    echo "==> atomisp era in uso: chiudi la webcam e poi"
-    echo "    sudo modprobe -r atomisp && sudo modprobe atomisp   (oppure riavvia)"
-  fi
-else
-  echo "==> moduli non caricati: si caricheranno all'avvio o con 'sudo modprobe atomisp'"
+  modprobe -r atomisp 2>/dev/null || fail=1
 fi
+if [ "$fail" = 0 ] && lsmod | grep -q '^mt9m114 '; then
+  modprobe -r mt9m114 2>/dev/null || true
+fi
+if [ "$fail" = 0 ] && modprobe atomisp 2>/dev/null; then
+  echo "==> moduli ricaricati (atomisp) - nessun riavvio necessario"
+else
+  echo "==> non sono riuscito a ricaricare i moduli: chiudi la webcam e poi"
+  echo "    sudo modprobe -r atomisp mt9m114 && sudo modprobe atomisp   (oppure riavvia)"
+fi
+# verifica che mt9m114 sia quello PATCHATO (updates/dkms) e non quello del kernel stock
+case "$(modinfo -n mt9m114 2>/dev/null || true)" in
+  */updates/dkms/*) echo "    mt9m114: versione patchata ($(modinfo -n mt9m114))" ;;
+  "")               echo "    mt9m114: non caricato, si carichera' all'avvio" ;;
+  *)  echo "    ATTENZIONE: mt9m114 in uso e' quello del kernel stock (senza flip, senza il fix AE)"
+      echo "      sudo modprobe -r mt9m114 && sudo modprobe mt9m114" ;;
+esac
 echo "==> fatto."
 echo "    Verifica: modinfo atomisp | head -3 ; dmesg | grep -i -E 'atomisp|mt9m114'"

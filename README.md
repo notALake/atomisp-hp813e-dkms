@@ -1,87 +1,94 @@
 # atomisp-hp813e-dkms
 
-atomisp + mt9m114 (con le 15 patch di notALake/linux-zen-atomisp-bin) come moduli DKMS,
-al posto di un kernel linux-zen ricompilato.
+atomisp + mt9m114 (with the 15 patches from notALake/linux-zen-atomisp-bin) as
+DKMS modules, instead of a rebuilt linux-zen kernel.
 
     sudo pacman -S dkms linux-zen-headers git patch
     sudo ./install.sh
 
-- Scarica da zen-kernel il tag che corrisponde al kernel in esecuzione (`uname -r`).
-  I sorgenti scaricati restano in cache (`~/.cache/atomisp-hp813e/<tag>`) e non vengono
-  riscaricati alle build successive; `--refresh` li riscarica, `ATOMISP_CACHE=...` cambia
-  la cartella della cache.
-- Se cambia la versione del kernel (anche solo 7.2.11 -> 7.2.12) ci pensa l'hook pacman
-  (vedi sotto): se per qualche motivo non gira, rilancia `sudo ./install.sh`.
-  Il pacchetto DKMS contiene i sorgenti di UNA versione.
-- Se una patch non si applica, lo script si ferma e non installa nulla.
-- A fine installazione lo script ricarica da solo i moduli. Se la webcam e' aperta il
-  ricaricamento non riesce: chiudi il programma e usa
-  `sudo modprobe -r atomisp && sudo modprobe atomisp` (o riavvia).
-- Secure Boot / lockdown: i moduli vanno firmati (chiave MOK in /etc/dkms/framework.conf).
-- Disinstallare: `sudo dkms remove atomisp-hp813e/<ver> --all; sudo rm /etc/modprobe.d/atomisp-hp813e.conf`
-  (e per togliere l'hook: `sudo rm /etc/pacman.d/hooks/75-atomisp-hp813e.hook`)
+- Downloads the zen-kernel tag matching the running kernel (`uname -r`). The
+  downloaded sources stay in cache (`~/.cache/atomisp-hp813e/<tag>`) and are not
+  downloaded again on later builds; `--refresh` re-downloads them,
+  `ATOMISP_CACHE=...` changes the cache directory.
+- If the kernel version changes (even just 7.2.11 -> 7.2.12), the pacman hook
+  handles it (see below); if for some reason it does not run, run
+  `sudo ./install.sh` again. The DKMS package contains the sources for ONE
+  version.
+- If a patch does not apply, the script stops and installs nothing.
+- At the end of the installation the script reloads the modules by itself. If
+  the webcam is open, the reload fails: close the program and use
+  `sudo modprobe -r atomisp && sudo modprobe atomisp` (or reboot).
+- Secure Boot / lockdown: the modules must be signed (MOK key in
+  `/etc/dkms/framework.conf`).
+- Uninstall: `sudo dkms remove atomisp-hp813e/<ver> --all; sudo rm /etc/modprobe.d/atomisp-hp813e.conf`
+  (and to remove the hook: `sudo rm /etc/pacman.d/hooks/75-atomisp-hp813e.hook`)
 
-## Aggiornamenti del kernel
+## Kernel updates
 
-A ogni installazione lo script mette anche un hook pacman
-(`/etc/pacman.d/hooks/75-atomisp-hp813e.hook`). Alla fine di un `pacman -Syu` che
-installa o aggiorna un kernel (o i suoi header) l'hook:
+On every installation the script also installs a pacman hook
+(`/etc/pacman.d/hooks/75-atomisp-hp813e.hook`). At the end of a `pacman -Syu`
+that installs or upgrades a kernel (or its headers) the hook:
 
-1. guarda ogni `/usr/lib/modules/<kernel>` che ha gli header (`build/`);
-2. se per quel kernel `dkms status` non riporta il modulo installato, lo ricostruisce
-   da capo dal tag zen-kernel corrispondente e lo installa. E' un controllo
-   idempotente: se il modulo c'e' gia' non tocca nulla (e allora lo script, nella
-   normale esecuzione, tiene le versioni DKMS sane di altri kernel come fallback).
+1. looks at every `/usr/lib/modules/<kernel>` that has headers (`build/`);
+2. if `dkms status` does not report the module installed for that kernel, it
+   rebuilds it from scratch from the matching zen-kernel tag and installs it.
+   It is an idempotent check: if the module is already there it does nothing
+   (and then the script, in its normal run, keeps the healthy DKMS versions of
+   other kernels as a fallback).
 
-Quindi dopo un aggiornamento del kernel **basta riavviare**: la webcam funziona senza
-rilanciare niente a mano. L'hook guarda tutti i kernel installati, non solo quello in
-esecuzione, quindi costruisce il modulo anche prima del reboot.
+So after a kernel update **you only need to reboot**: the webcam works without
+running anything by hand. The hook looks at all installed kernels, not just the
+running one, so it builds the module before the reboot too.
 
-Anche se la ricostruzione col tag nuovo dovesse fallire (patch non applicabili, rete
-assente) di solito la webcam comunque funziona: le versioni DKMS rimaste sane vengono
-tenute, e `dkms autoinstall` (hook `70-dkms-install` di Arch) le ricompila per il kernel
-nuovo dai sorgenti dell'ultima versione funzionante, che sono comunque patchati.
+Even if the rebuild with the new tag fails (patches not applicable, no network)
+the webcam usually still works: the healthy DKMS versions that remain are kept,
+and `dkms autoinstall` (Arch's `70-dkms-install` hook) rebuilds them for the new
+kernel from the sources of the last working version, which are patched anyway.
 
-Se la ricostruzione automatica fallisce (rete assente, patch non applicabili al tag
-nuovo, header mancanti) lo dice in uscita a pacman e basta rilanciare a mano:
+If the automatic rebuild fails (no network, patches not applicable to the new
+tag, missing headers) it says so in the pacman output and you just run it again
+by hand:
 
     sudo /usr/local/share/atomisp-hp813e/install.sh
 
-Il kit (`install.sh` + `patches/`) viene copiato in `/usr/local/share/atomisp-hp813e/`
-perche' l'hook non deve dipendere dalla posizione della repo: lanciando `./install.sh`
-dalla repo la copia viene sempre aggiornata.
+The kit (`install.sh` + `patches/`) is copied to
+`/usr/local/share/atomisp-hp813e/` because the hook must not depend on the
+repository location: running `./install.sh` from the repo always refreshes the
+copy.
 
 ## Firmware
 
-`shisp_2401a0_v21.bin` **non e' incluso nel repo**: lo fornisce il pacchetto
-`linux-firmware-intel` in `/usr/lib/firmware/intel/ipu/` (compresso `.zst`, il kernel lo
-decomprime da solo) e il driver cerca proprio quel path per primo.
+`shisp_2401a0_v21.bin` **is not included in the repo**: it is provided by the
+`linux-firmware-intel` package in `/usr/lib/firmware/intel/ipu/` (compressed as
+`.zst`; the kernel decompresses it itself) and the driver looks for that path
+first.
 
-Se il sistema non ce l'ha, `install.sh` usa la copia `shisp_2401a0_v21.bin` messa accanto
-allo script; se non c'e' nemmeno quella avverte e va avanti. `--no-firmware` salta il passo.
+If the system does not have it, `install.sh` uses the `shisp_2401a0_v21.bin`
+copy placed next to the script; if that is missing too it warns and continues.
+`--no-firmware` skips this step.
 
-## Colore: parametri del modulo
+## Color: module parameters
 
-Il percorso raw-Bayer -> ISP Intel non ha nessun algoritmo di auto-white-balance e nessun
-controllo di saturazione (su Linux non gira nessun demone 3A), quindi i default sono
-compilati nelle patch 0013 (bilanciamento del bianco) e 0015 (saturazione).
-Sono anche modificabili a runtime.
+The raw-Bayer -> Intel ISP path has no auto-white-balance algorithm and no
+saturation control (no 3A daemon runs on Linux), so the defaults are compiled
+into patches 0013 (white balance) and 0015 (saturation). They can also be
+changed at runtime.
 
-| parametro | default | significato |
+| parameter | default | meaning |
 |---|---|---|
-| `wb_r` | 27200 | guadagno **blu** = 1.66x (il campo si chiama `r` ma e' il blu: nell'ISP i due campi sono scambiati) |
-| `wb_b` | 17720 | guadagno **rosso** = 1.08x |
-| `saturation` | 180 | saturazione, 100 = matrice originale, 0 = scala di grigi |
-| `wb_gr` | 16384 | verde (Gr) = 1.00x |
-| `wb_gb` | 16384 | verde (Gb) = 1.00x |
+| `wb_r` | 27200 | **blue** gain = 1.66x (the field is called `r` but it is blue: the two fields are swapped in the ISP) |
+| `wb_b` | 17720 | **red** gain = 1.08x |
+| `saturation` | 180 | saturation, 100 = original matrix, 0 = grayscale |
+| `wb_gr` | 16384 | green (Gr) = 1.00x |
+| `wb_gb` | 16384 | green (Gb) = 1.00x |
 | `wb_integer_bits` | 2 | 16384 = 1.0x |
 
-I valori nuovi si leggono alla prossima apertura della webcam (lo stream ISP viene ricreato
-a ogni STREAMON), quindi si prova senza ricompilare:
+New values are read the next time the webcam is opened (the ISP stream is
+recreated on every STREAMON), so you can try them without recompiling:
 
     echo 27200 | sudo tee /sys/module/atomisp/parameters/wb_r
     echo 17720 | sudo tee /sys/module/atomisp/parameters/wb_b
     echo 180   | sudo tee /sys/module/atomisp/parameters/saturation
 
-Per renderli permanenti vanno cambiati in `patches/0013-...` (`wb_r`, `wb_b`) e
-`patches/0015-...` (`saturation`), poi si rilancia `sudo ./install.sh`.
+To make them permanent, change them in `patches/0013-...` (`wb_r`, `wb_b`) and
+`patches/0015-...` (`saturation`), then run `sudo ./install.sh` again.

@@ -27,7 +27,7 @@ USE_KORG=0
 FIRMWARE=1
 REFRESH=0
 HOOK=0
-PATCHSET=15
+PATCHSET=16
 while [ $# -gt 0 ]; do
   case "$1" in
     --kver) KVER="$2"; shift 2 ;;

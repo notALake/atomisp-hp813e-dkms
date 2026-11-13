@@ -1,0 +1,86 @@
+diff -ruN a/drivers/staging/media/atomisp/pci/isp/kernels/gc/gc_2/ia_css_gc2.host.c b/drivers/staging/media/atomisp/pci/isp/kernels/gc/gc_2/ia_css_gc2.host.c
+--- a/drivers/staging/media/atomisp/pci/isp/kernels/gc/gc_2/ia_css_gc2.host.c	2026-11-13 11:36:09.713214537 +0100
++++ b/drivers/staging/media/atomisp/pci/isp/kernels/gc/gc_2/ia_css_gc2.host.c	2026-11-13 11:36:23.281648310 +0100
+@@ -30,7 +30,7 @@
+ 
+ /*
+  * Colour saturation of the YUV output, as a percentage of the standard
+- * BT.601 chroma amplitude (100 == unchanged, 0 == greyscale, 180 == default).
++ * BT.601 chroma amplitude (100 == unchanged, 0 == greyscale, 255 == default).
+  *
+  * On the HP Pavilion x2 (board 813E) the whole pipeline runs in raw Bayer up
+  * to the Intel ISP and there is no 3A/colour-correction daemon on Linux, so
+@@ -39,12 +39,12 @@
+  *
+  * Exposed as a module parameter so it can be tuned at runtime, for example:
+  *
+- *     echo 140 | sudo tee /sys/module/atomisp/parameters/saturation
++ *     echo 160 | sudo tee /sys/module/atomisp/parameters/saturation
+  *
+  * The ISP stream (and therefore this matrix) is recreated on every capture
+  * session, so new values are picked up at the next STREAMON.
+  */
+-static unsigned int saturation = 180;	/* chosen by eye on this panel */
++static unsigned int saturation = 255;	/* fitted to a phone reference photo */
+ module_param(saturation, uint, 0644);
+ 
+ const struct ia_css_cc_config *ia_css_default_rgb2yuv_config(void)
+@@ -54,15 +54,20 @@
+ 	unsigned int s = saturation;
+ 
+ 	/*
+-	 * Coefficients are s[13-fraction_bits].[fraction_bits]; keep |v| < 8192.
++	 * Coefficients must stay inside [-8192, 8191]. The stock matrix is
++	 * s0.13; halving it and using s1.12 leaves room for the chroma rows
++	 * (up to 390%) without overflowing that range.
++	 *
+ 	 * The 64-bit cast is needed: matrix[] is signed but s is unsigned, and a
+ 	 * plain "matrix[i] * s" would promote the product to unsigned, turning
+ 	 * the negative coefficients into huge positive values (totally magenta).
+ 	 */
+-	if (s > 190)
+-		s = 190;
++	if (s > 390)
++		s = 390;
+ 
+-	cfg = default_rgb2yuv_cc_config;
++	for (i = 0; i < 9; i++)
++		cfg.matrix[i] = default_rgb2yuv_cc_config.matrix[i] / 2;
++	cfg.fraction_bits = 12;
+ 	for (i = 3; i < 9; i++)	/* rows 1 and 2 are U and V (chroma) */
+ 		cfg.matrix[i] = (s32)((long long)cfg.matrix[i] * s / 100);
+ 	return &cfg;
+diff -ruN a/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.c b/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.c
+--- a/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.c	2026-11-13 11:36:09.708146825 +0100
++++ b/drivers/staging/media/atomisp/pci/isp/kernels/wb/wb_1.0/ia_css_wb.host.c	2026-11-13 11:36:23.281648310 +0100
+@@ -36,21 +36,23 @@
+  * The values are exposed as module parameters so the white balance can be
+  * tuned at runtime without rebuilding/reinstalling the module, for example:
+  *
+- *     echo 27200 | sudo tee /sys/module/atomisp/parameters/wb_r
+- *     echo 17720 | sudo tee /sys/module/atomisp/parameters/wb_b
++ *     echo 31785 | sudo tee /sys/module/atomisp/parameters/wb_r
++ *     echo 18350 | sudo tee /sys/module/atomisp/parameters/wb_b
+  *
+  * The ISP stream (and therefore these defaults) is recreated on every
+  * capture session, so new values are picked up at the next STREAMON.
+  */
+ static unsigned int wb_integer_bits = 2;
+ static unsigned int wb_gr = 16384;	/* Gr == 1.00 */
+-static unsigned int wb_r  = 27200;	/* blue == 1.66 */
+-static unsigned int wb_b  = 17720;	/* red  == 1.08 */
++static unsigned int wb_r  = 31785;	/* blue == 1.94 */
++static unsigned int wb_b  = 18350;	/* red  == 1.12 */
+ static unsigned int wb_gb = 16384;	/* Gb == 1.00 */
+ 
+-/* tuned by eye with the saturation boost (patch 0015) active: that boost
+- * multiplies the residual colour cast too, so these two gains are chosen
+- * where the white background stays neutral at saturation 180. */
++/* Measured against a reference photo of the same scene taken with a phone.
++ * The gains are applied before the saturation boost (patch 0015), which
++ * scales the residual cast as well, so both were fitted together at
++ * saturation 255: these are the values that make the white walls neutral
++ * and the red/blue objects match the reference. */
+ module_param(wb_integer_bits, uint, 0644);
+ module_param(wb_gr, uint, 0644);
+ module_param(wb_r,  uint, 0644);

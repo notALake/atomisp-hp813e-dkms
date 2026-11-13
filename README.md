@@ -4,7 +4,7 @@ Patched `atomisp` + `mt9m114` as DKMS modules for HP Pavilion x2 (board 813E)
 webcams on linux-zen, instead of a custom rebuilt kernel.
 
 Sources are taken from the zen-kernel tag matching the kernel being built and
-patched with the 15-patch set in [`patches/`](patches).
+patched with the 16-patch set in [`patches/`](patches).
 
 ## Requirements
 
@@ -52,15 +52,15 @@ If a patch does not apply, the script stops before installing anything.
 
 ## DKMS version
 
-The DKMS version is the patch set number, currently `15`, with no kernel
+The DKMS version is the patch set number, currently `16`, with no kernel
 version in it:
 
 ```text
-atomisp-hp813e/15
+atomisp-hp813e/16
 ```
 
 The DKMS entry is reused for every kernel. Its sources live in
-`/usr/src/atomisp-hp813e-15` and are replaced with the sources of the kernel
+`/usr/src/atomisp-hp813e-16` and are replaced with the sources of the kernel
 being built; modules already built for other kernels are not touched.
 
 ## Kernel updates
@@ -70,7 +70,7 @@ On every run the script installs a pacman hook
 upgrades a kernel (or its headers), the hook:
 
 1. looks at every `/usr/lib/modules/<kernel>` that has headers (`build/`);
-2. for each kernel where `dkms status` does not report `atomisp-hp813e/15` as
+2. for each kernel where `dkms status` does not report `atomisp-hp813e/16` as
    installed, rebuilds it from the matching zen-kernel tag and installs it.
 
 So after a kernel update **you only need to reboot**: the webcam works without
@@ -93,10 +93,10 @@ the last working version for the new kernel from its patched sources.
 ## Uninstall
 
 ```sh
-sudo dkms remove atomisp-hp813e/15 --all
+sudo dkms remove atomisp-hp813e/16 --all
 sudo rm -f /etc/modprobe.d/atomisp-hp813e.conf
 sudo rm -f /etc/pacman.d/hooks/75-atomisp-hp813e.hook
-sudo rm -rf /usr/src/atomisp-hp813e-15 /usr/local/share/atomisp-hp813e
+sudo rm -rf /usr/src/atomisp-hp813e-16 /usr/local/share/atomisp-hp813e
 sudo depmod -a
 ```
 
@@ -114,29 +114,36 @@ copy placed next to the script; if that is missing too it warns and continues.
 
 The raw-Bayer -> Intel ISP path has no auto-white-balance algorithm and no
 saturation control (no 3A daemon runs on Linux), so the defaults are compiled
-into patches 0013 (white balance) and 0015 (saturation). They can also be
-changed at runtime.
+into patches 0013 (white balance) and 0015 (saturation) and tuned by patch 0016
+against a reference photo of the same scene taken with a phone. They can also
+be changed at runtime. Since there is no auto-white-balance, these defaults are
+optimal for that indoor lighting; use the parameters below under other
+illuminants.
 
 | parameter | default | meaning |
 | --- | --- | --- |
-| `wb_r` | 27200 | **blue** gain = 1.66x (the field is called `r` but it is blue: the two fields are swapped in the ISP) |
-| `wb_b` | 17720 | **red** gain = 1.08x |
-| `saturation` | 180 | saturation, 100 = original matrix, 0 = grayscale |
+| `wb_r` | 31785 | **blue** gain = 1.94x (the field is called `r` but it is blue: the two fields are swapped in the ISP) |
+| `wb_b` | 18350 | **red** gain = 1.12x |
+| `saturation` | 255 | saturation, 100 = original matrix, 0 = grayscale, max 390 |
 | `wb_gr` | 16384 | green (Gr) = 1.00x |
 | `wb_gb` | 16384 | green (Gb) = 1.00x |
 | `wb_integer_bits` | 2 | 16384 = 1.0x |
+
+Patch 0016 lowers the matrix `fraction_bits` from 13 to 12 (halving all
+coefficients), because the ISP only accepts coefficients in `[-8192, 8191]`
+and a saturation above ~195% would otherwise overflow the chroma rows.
 
 New values are read the next time the webcam is opened (the ISP stream is
 recreated on every STREAMON), so you can try them without recompiling:
 
 ```sh
-echo 27200 | sudo tee /sys/module/atomisp/parameters/wb_r
-echo 17720 | sudo tee /sys/module/atomisp/parameters/wb_b
-echo 180   | sudo tee /sys/module/atomisp/parameters/saturation
+echo 31785 | sudo tee /sys/module/atomisp/parameters/wb_r
+echo 18350 | sudo tee /sys/module/atomisp/parameters/wb_b
+echo 255   | sudo tee /sys/module/atomisp/parameters/saturation
 ```
 
-To make them permanent, change them in `patches/0013-...` (`wb_r`, `wb_b`) and
-`patches/0015-...` (`saturation`), then run `sudo ./install.sh` again.
+To make them permanent, change them in `patches/0016-...`
+(`wb_r`, `wb_b`, `saturation`), then run `sudo ./install.sh` again.
 
 ## Credits
 
